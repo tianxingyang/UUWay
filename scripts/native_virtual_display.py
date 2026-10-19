@@ -70,6 +70,7 @@ class VirtualDisplays:
         self.idle_since = None
         self.session_updated = 0
         self.managed_connectors = set()
+        self.router = None
         self.decorate(backend.monitors())
 
     @staticmethod
@@ -598,6 +599,29 @@ class VirtualDisplays:
         self._event('output_changed', connector=connector, enabled=enabled, persistent=False)
         return dict(completed=True)
 
+    def change_mode(self, screen, mode):
+        """Route an IDD size selection through the normal capture/rollback path.
+
+        The IDD catalogue is a list of modes, not a viewport notification.
+        Do not confirm from the metadata-only negotiation consumer: only the
+        bridge's subsequent owned video allocation can confirm this change.
+        """
+        if self.router is None or self.find(screen['connector']) is not screen:
+            raise RuntimeError('No guarded owned virtual display is available')
+        monitor = next((item for item in self.backend.monitors()
+                        if item['connector'] == screen['connector']), None)
+        if monitor is None:
+            raise ValueError('Virtual output is no longer active')
+        index = monitor['index']
+        selected = self.router.guardian(index)
+        state = selected.backend.current()
+        if selected.transaction.pending is None:
+            screen['rollback_mode'] = copy.deepcopy(next(entry for entry in state['modes']
+                                                        if entry['id'] == state['mode']))
+        return self.router.request(dict(version=1, op='apply', output=index, serial=state['serial'],
+                                        width=mode[0], height=mode[1], refresh=mode[2],
+                                        confirmation='gpu_frame'))
+
     def ioctl(self, code, payload):
         if type(code) is not int or not isinstance(payload, list) or len(payload) > 1024 or any(
                 type(value) is not int or not 0 <= value <= 255 for value in payload):
@@ -638,10 +662,18 @@ class VirtualDisplays:
             except ValueError as error:
                 self._event('modes_rejected', slot=slot, reason=str(error))
                 raise
+            previous = self.modes.get(slot)
             self.modes[slot] = modes
+            try:
+                if code == 0x30c00c and slot in self.screens:
+                    self.change_mode(self.screens[slot], modes[0])
+            except Exception:
+                if previous is None:
+                    self.modes.pop(slot, None)
+                else:
+                    self.modes[slot] = previous
+                raise
             self._event('modes_accepted', slot=slot, count=len(modes))
-            if code == 0x30c00c and slot in self.screens:
-                self._negotiate(self.screens[slot], modes[0])
         else:
             raise ValueError('Unsupported virtual display operation')
         return dict(completed=True)
@@ -703,8 +735,16 @@ class VirtualSelectedDisplay(SelectedMutterDisplay):
         screen = self.manager.find(self.connector)
         if screen:
             known = {entry['id'] for entry in state['modes']}
-            state['modes'] += [entry for entry in self.manager.entries(screen)
-                               if entry['id'] not in known]
+            # The Windows catalogue is bounded to 64, but a replacement full
+            # catalogue must not hide the previous mode from internal rollback.
+            entries = self.manager.entries(screen)
+            entries += [mode_entry(mode) for mode in screen.get('history', [])]
+            if screen.get('rollback_mode'):
+                entries.append(screen['rollback_mode'])
+            for entry in entries:
+                if entry['id'] not in known:
+                    state['modes'].append(entry)
+                    known.add(entry['id'])
         return state
 
     def configure(self, state, target, verify_only):

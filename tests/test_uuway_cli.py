@@ -585,9 +585,12 @@ class StepSelectionTests(CliCase):
             pin.write_text("pin")
         # Not installed yet: the first look finds nothing, the check after the apt commands finds 11.0.
         versions = ["wine-11.0"] * 3 if installed else [None, "wine-11.0", "wine-11.0"]
-        listing = [Path("/etc/apt/sources.list.d/winehq-noble.sources")] if sources else []
+        source = self.root / 'winehq-noble.sources'
+        source.write_text('URIs: https://dl.winehq.org/wine-builds/ubuntu\nSuites: noble\n')
+        listing = [source] if sources else []
         with patch.object(cli, "WINE_PIN", pin), patch.object(cli, "wine_version", side_effect=versions), \
-                patch.object(Path, "glob", return_value=iter(listing)):
+                patch.object(cli, 'os_release', return_value=dict(ID='ubuntu', VERSION_ID='24.04')), \
+                patch.object(Path, "glob", side_effect=lambda *unused: iter(listing)):
             self.quiet(cli.wine_run, ctx)
         return " | ".join(" ".join(c) for c in self.commands)
 

@@ -4,6 +4,8 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
+This branch adds guarded UU IDD mode selection, continuous-resize rollback, and Debian Wine source checks. Actual UU client acceptance is still required. Owned virtual displays require GNOME Wayland; adapting an existing X11 desktop is not implemented. See [scope and validation](docs/adaptive-resolution.md).
+
 ![Ubuntu 24.04 / 26.04](https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white)
 ![GNOME Wayland](https://img.shields.io/badge/GNOME-Wayland-4A86CF?logo=gnome&logoColor=white)
 ![NVIDIA NVENC](https://img.shields.io/badge/NVIDIA-NVENC-76B900?logo=nvidia&logoColor=white)

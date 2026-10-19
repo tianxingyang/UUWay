@@ -247,6 +247,15 @@ def same_file(left, right):
 
 # --------------------------------------------------------------------- environment
 
+def os_release():
+    release = {}
+    with contextlib.suppress(OSError):
+        for line in Path('/etc/os-release').read_text().splitlines():
+            key, separator, value = line.partition('=')
+            if separator and not key.startswith('#'):
+                release[key] = value.strip().strip('\"\'')
+    return release
+
 def wine_version(ctx):
     result = ctx.probe([WINE_DIR / 'wine', '--version'])
     return result.stdout.strip() if result.returncode == 0 else None
@@ -259,11 +268,7 @@ def refuse_root():
 
 def check_environment(ctx):
     refuse_root()
-    release = {}
-    with contextlib.suppress(OSError):
-        for line in Path('/etc/os-release').read_text().splitlines():
-            key, _, value = line.partition('=')
-            release[key] = value.strip('"')
+    release = os_release()
     if release.get('ID') == 'ubuntu' and release.get('VERSION_ID') == '24.04':
         ok('Ubuntu 24.04')
     else:
@@ -388,6 +393,53 @@ def wine_pin_command(ctx):
     return ['sudo', 'install', '-D', '-m', '0644', str(ROOT / 'config/uuway-wine.preferences'), str(WINE_PIN)]
 
 
+def wine_source():
+    """Resolve an explicitly supported distribution before any privileged write.
+
+    ID_LIKE is deliberately ignored: Debian and Ubuntu binaries are not
+    interchangeable. Other releases can supply a reviewed Wine 11 separately.
+    """
+    release = os_release()
+    targets = {('ubuntu', '24.04'): ('ubuntu', 'noble'),
+               ('debian', '13'): ('debian', 'trixie')}
+    target = targets.get((release.get('ID'), release.get('VERSION_ID')))
+    if target is None:
+        raise SetupError('当前系统没有已审核的 WineHQ 自动安装源；请先为本发行版安装 WineHQ 11.0。')
+    family, suite = target
+    if release.get('VERSION_CODENAME', suite) != suite:
+        raise SetupError('系统版本与代号不一致，拒绝配置 WineHQ 软件源。')
+    path = Path('/etc/apt/sources.list.d') / f'winehq-{suite}.sources'
+    url = f'https://dl.winehq.org/wine-builds/{family}/dists/{suite}/winehq-{suite}.sources'
+    for existing in Path('/etc/apt/sources.list.d').glob('winehq*'):
+        text = existing.read_text()
+        # Recognize both deb822 and legacy deb lines; refuse rather than
+        # rewrite a user's mismatched or unrecognized source configuration.
+        uri = f'https://dl.winehq.org/wine-builds/{family}'
+        if existing.suffix == '.sources':
+            fields = {}
+            current = None
+            for line in text.splitlines():
+                if not line.strip() or line.lstrip().startswith('#'):
+                    continue
+                if line[:1].isspace() and current is not None:
+                    fields[current].extend(line.split())
+                    continue
+                key, separator, value = line.partition(':')
+                if not separator:
+                    raise SetupError(f'无法核实已有 WineHQ 源：{existing}；未修改系统。')
+                current = key.strip().lower()
+                fields.setdefault(current, []).extend(value.split())
+            valid = (fields.get('uris') in ([uri], [uri + '/']) and fields.get('suites') == [suite])
+        else:
+            lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+            valid = bool(lines) and all(re.fullmatch(
+                r'deb(?:-src)?\s+(?:\[[^\]]+\]\s+)?' + re.escape(uri) + r'/?\s+' +
+                re.escape(suite) + r'\s+main\s*(?:#.*)?', line) for line in lines)
+        if not valid:
+            raise SetupError(f'已有 WineHQ 源与当前发行版不匹配或无法核实：{existing}；未修改系统。')
+    return path, url
+
+
 def wine_run(ctx):
     version = wine_version(ctx)
     if version and version.startswith(WINE_SERIES):
@@ -397,6 +449,7 @@ def wine_run(ctx):
         else:
             warn('没有固定 WineHQ 版本；升级 WineHQ 之后 UUWay 可能无法采集画面。')
         return
+    source_path, source_url = wine_source()
     info('需要 WineHQ stable 11.0（装在 /opt/wine-stable）；UUWay 的 GPU 采集依赖这个版本。')
     if not ctx.confirm('现在用 sudo 添加 WineHQ 软件源并安装 winehq-stable 11.0？'):
         raise SetupError('缺少 WineHQ stable 11.0，已停止。')
@@ -406,10 +459,9 @@ def wine_run(ctx):
         ctx.run(sudo + ['install', '-d', '-m', '0755', '/etc/apt/keyrings'])
         ctx.run(sudo + ['curl', '-fsSLo', '/etc/apt/keyrings/winehq-archive.asc',
                         'https://dl.winehq.org/wine-builds/winehq.key'])
-        ctx.run(sudo + ['curl', '-fsSLo', '/etc/apt/sources.list.d/winehq-noble.sources',
-                        'https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources'])
+        ctx.run(sudo + ['curl', '-fsSLo', str(source_path), source_url])
         ctx.run(sudo + ['sed', '-i', 's@winehq-archive.key@winehq-archive.asc@',
-                        '/etc/apt/sources.list.d/winehq-noble.sources'])
+                        str(source_path)])
     else:
         info('已有 WineHQ 软件源配置，保持不变。')
     ctx.run(wine_pin_command(ctx))

@@ -134,6 +134,28 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
 fi
 
 if should_run 1; then
+    wine_ready=0
+    if [[ -x "$wine_dir/wine" ]] && "$wine_dir/wine" --version 2>/dev/null | grep -Eq '^wine-11\.0([ .-]|$)'; then
+        wine_ready=1
+    else
+        # Validate the same distribution/source policy as uuway setup BEFORE
+        # apt update installs build dependencies. Never add Ubuntu to Debian.
+        wine_source_plan="$("$python" - "$repo_dir/scripts" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from uuway_cli import SetupError, wine_source
+try:
+    path, url = wine_source()
+except (SetupError, OSError) as error:
+    print(str(error), file=sys.stderr)
+    raise SystemExit(1)
+print(path)
+print(url)
+PY
+)" || die "WineHQ 软件源预检失败，尚未安装依赖或修改软件源。"
+        mapfile -t wine_source_fields <<< "$wine_source_plan"
+        ((${#wine_source_fields[@]} == 2)) || die "WineHQ 软件源预检结果无效。"
+    fi
     missing=()
     for package in "${packages[@]}"; do
         dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || missing+=("$package")
@@ -147,20 +169,25 @@ if should_run 1; then
         ok "构建依赖已齐全"
     fi
 
-    if [[ -x "$wine_dir/wine" ]] && "$wine_dir/wine" --version 2>/dev/null | grep -q '^wine-11'; then
+    if ((wine_ready)); then
         ok "WineHQ stable：$("$wine_dir/wine" --version)"
+        run sudo install -D -m 0644 "$repo_dir/config/uuway-wine.preferences" /etc/apt/preferences.d/uuway-wine
     else
-        info "需要 WineHQ stable 11（安装在 /opt/wine-stable）。"
-        confirm "现在添加 WineHQ 软件源并安装 winehq-stable？" || die "缺少 WineHQ stable 11，已停止。"
+        info "需要 WineHQ stable 11.0（安装在 /opt/wine-stable）。"
+        confirm "现在为当前发行版添加 WineHQ 软件源并安装 11.0？" || die "缺少 WineHQ stable 11.0，已停止。"
         run sudo dpkg --add-architecture i386
-        run sudo mkdir -pm755 /etc/apt/keyrings
-        run sudo curl -fsSLo /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
-        run sudo curl -fsSLo /etc/apt/sources.list.d/winehq-noble.sources \
-            https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+        if ! compgen -G '/etc/apt/sources.list.d/winehq*' >/dev/null; then
+            run sudo mkdir -pm755 /etc/apt/keyrings
+            run sudo curl -fsSLo /etc/apt/keyrings/winehq-archive.asc https://dl.winehq.org/wine-builds/winehq.key
+            run sudo curl -fsSLo "${wine_source_fields[0]}" "${wine_source_fields[1]}"
+            run sudo sed -i 's@winehq-archive.key@winehq-archive.asc@' "${wine_source_fields[0]}"
+        fi
+        run sudo install -D -m 0644 "$repo_dir/config/uuway-wine.preferences" /etc/apt/preferences.d/uuway-wine
         run sudo apt-get update
-        run sudo apt-get install -y --install-recommends winehq-stable
-        ((dry_run)) || "$wine_dir/wine" --version | grep -q '^wine-11' ||
-            die "装好的 WineHQ stable 不是 11 版（$("$wine_dir/wine" --version)）。"
+        run sudo apt-get install -y --install-recommends 'winehq-stable=11.0.*' 'wine-stable=11.0.*' \
+            'wine-stable-amd64=11.0.*' 'wine-stable-i386:i386=11.0.*'
+        ((dry_run)) || "$wine_dir/wine" --version | grep -Eq '^wine-11\.0([ .-]|$)' ||
+            die "装好的 WineHQ stable 不是 11.0 版（$("$wine_dir/wine" --version)）。"
     fi
 fi
 

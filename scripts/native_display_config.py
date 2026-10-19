@@ -234,32 +234,40 @@ class DisplayTransaction:
         self.pending = None
         self.checkpoint = checkpoint or (lambda pending: None)
 
-    def prepare(self, serial, width, height, refresh=0, scale=None):
-        if self.pending is not None:
+    def prepare(self, serial, width, height, refresh=0, scale=None, *, replace_pending=False):
+        previous = self.pending
+        if previous is not None and not replace_pending:
             raise RuntimeError('Another display change still requires confirmation')
         state = self.backend.current()
+        if previous is not None and (previous['observed'] is None or
+                signature(state) != signature(previous['observed'])):
+            raise RuntimeError('Pending display observation is no longer current')
         if type(serial) is not int or serial != state['serial']:
             raise RuntimeError('Display configuration changed since enumeration')
         target = choose(state, width, height, refresh, scale)
         self.backend.configure(state, target, True)
         if signature(self.backend.current()) != signature(state):
             raise RuntimeError('Display changed during mode verification')
-        return dict(before=state, target=target)
+        plan = dict(before=state, target=target)
+        if previous is not None:
+            plan.update(supersedes=previous, rollback_before=previous['before'])
+        return plan
 
     def apply(self, plan):
-        if self.pending is not None or signature(self.backend.current()) != signature(plan['before']):
+        previous = plan.get('supersedes')
+        if self.pending is not previous or signature(self.backend.current()) != signature(plan['before']):
             raise RuntimeError('Display plan is stale or another transaction is pending')
         before, target = plan['before'], plan['target']
         if not plan.get('force_reset', False) and before['mode'] == target['mode'] and abs(before['scale'] - target['scale']) < 0.00001:
             return dict(changed=False, serial=before['serial'])
         # Do not retry an ambiguous D-Bus reply. Keep intent available to the
         # caller even if the compositor changes state then the reply is lost.
-        self.pending = dict(before=before, target=target, observed=None, confirmed=False,
+        self.pending = dict(before=plan.get('rollback_before', before), target=target, observed=None, confirmed=False,
                             requested_ns=time.monotonic_ns())
         try:
             self.checkpoint(self.pending)
         except Exception:
-            self.pending = None  # No compositor write was issued.
+            self.pending = previous  # No compositor write was issued; retain its rollback.
             raise
         self.backend.configure(before, target, False)
         observed = self.backend.current()

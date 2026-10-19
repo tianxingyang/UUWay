@@ -25,6 +25,7 @@ class VirtualControlTests(unittest.TestCase):
         manager.create = Mock()
         manager.remove = Mock()
         manager._negotiate = Mock()
+        manager.change_mode = Mock()
         manager._event = Mock()
         manager.display_ids = {}
         manager.exclusive_baseline = None
@@ -259,7 +260,8 @@ class VirtualControlTests(unittest.TestCase):
         manager.remove.assert_called_once_with(2)
         manager.screens[2] = {'connector': 'fixture-owned'}
         manager.ioctl(0x30c00c, list(packet))
-        manager._negotiate.assert_called_once_with(manager.screens[2], (2560, 1440, 60))
+        manager.change_mode.assert_called_once_with(manager.screens[2], (2560, 1440, 60))
+        manager._negotiate.assert_not_called()
 
     def test_48_mode_catalogue_including_144_hz_and_mode_selection(self):
         manager = self.manager()
@@ -273,7 +275,8 @@ class VirtualControlTests(unittest.TestCase):
         manager.screens[0] = dict(slot=0, connector='owned')
         selected = struct.pack('<5I', 0, 1, 3840, 2160, 144)
         manager.ioctl(0x30c00c, list(selected))
-        manager._negotiate.assert_called_once_with(manager.screens[0], (3840, 2160, 144))
+        manager.change_mode.assert_called_once_with(manager.screens[0], (3840, 2160, 144))
+        manager._negotiate.assert_not_called()
 
     def test_invalid_catalogue_preserves_previous_modes_and_logs_the_rejected_entry(self):
         manager = self.manager()

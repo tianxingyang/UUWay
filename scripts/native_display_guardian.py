@@ -1,7 +1,7 @@
 """Durable, independently timed rollback for native display transactions."""
 import secrets
 import time
-from native_display_config import DisplayTransaction, MAX_REFRESH_HZ
+from native_display_config import DisplayTransaction, MAX_REFRESH_HZ, signature
 from native_runtime_state import read_private, write_private
 
 
@@ -117,22 +117,33 @@ class DisplayGuardian:
                 raise ValueError('Invalid forced display reset')
             if 'confirmation' in request and (op != 'apply' or request['confirmation'] != 'gpu_frame'):
                 raise ValueError('Unsupported display confirmation policy')
+            if self.backend.identity() != self.identity:
+                raise RuntimeError('Compositor identity changed')
             if self.transaction.pending is not None:
                 pending_target = self.transaction.pending.get('target')
                 if self.target_matches_request(pending_target, request):
                     current = self.backend.current()
+                    observed = self.transaction.pending.get('observed')
+                    if observed is None or signature(current) != signature(observed):
+                        raise RuntimeError('Pending display observation is no longer current')
                     if op == 'verify':
                         return dict(verified=True, desktop_changed=True)
                     remaining = max(0, int(self.deadline - time.monotonic()))
-                    observed = self.transaction.pending.get('observed') or current
                     return dict(changed=True, serial=observed.get('serial', current.get('serial')),
                                 transaction=self.identifier, confirmation_seconds=remaining)
-            if self.backend.identity() != self.identity:
-                raise RuntimeError('Compositor identity changed')
+            # Only owned virtual outputs with automatic frame confirmation may
+            # supersede an observed resize. Keep the original rollback baseline
+            # and require a new capture started after the latest request (also
+            # for A -> B -> A). Manual/physical transactions remain serialized.
+            replace_pending = (getattr(self.backend, 'ephemeral', False) is True and
+                               self.confirmation_policy == 'gpu_frame' and
+                               (op == 'verify' or request.get('confirmation') == 'gpu_frame'))
             plan = self.transaction.prepare(request['serial'], request['width'], request['height'],
-                                            request.get('refresh', 0), request.get('scale'))
+                                            request.get('refresh', 0), request.get('scale'),
+                                            replace_pending=replace_pending)
             if op == 'verify':
                 return dict(verified=True, desktop_changed=False)
+            previous_metadata = (self.identifier, self.confirmation_policy, self.deadline, self.registry_candidate)
             self.identifier = secrets.token_hex(16)
             self.confirmation_policy = request.get('confirmation', 'manual')
             self.deadline = time.monotonic() + self.timeout
@@ -159,7 +170,10 @@ class DisplayGuardian:
                     finally:
                         self.commit_default = False
             except Exception:
-                if self.transaction.pending is None:
+                if plan.get('supersedes') is not None and self.transaction.pending is plan['supersedes']:
+                    (self.identifier, self.confirmation_policy, self.deadline,
+                     self.registry_candidate) = previous_metadata
+                elif self.transaction.pending is None:
                     self.registry_candidate = None
                 raise
             return dict(result, transaction=self.identifier if result['changed'] else None,

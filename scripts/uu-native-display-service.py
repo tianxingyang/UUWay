@@ -64,6 +64,7 @@ def run(config_path):
         virtual.recovery_path = parent / 'virtual-layout-recovery.json'
         guardian = DisplayRouter(backend, parent,
             selected_factory=lambda connector: VirtualSelectedDisplay(connector, virtual))
+        virtual.router = guardian
         guardian.expire()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET | socket.SOCK_CLOEXEC)
         listener.bind(str(endpoint)); endpoint.chmod(0o600); bound = endpoint.lstat()

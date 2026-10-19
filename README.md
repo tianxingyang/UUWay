@@ -15,6 +15,8 @@
 
 UUWay 让官方 Windows 版 UU 远程被控端在 Linux 上运行，用手机或其他设备控制你的桌面。UU 程序文件保持原样，画面、输入和显示管理由 Linux 原生组件适配。
 
+本分支增加了 UU IDD 尺寸选择的采集确认、连续请求回退及 Debian Wine 源保护，仍需真实 UU 客户端验收。当前虚拟屏实现依赖 GNOME Wayland，不支持在现有 X11 桌面上直接完成自适应；[实现边界与验证方案](docs/adaptive-resolution.md)。
+
 ## UU 功能适配
 
 以下 UU 常用功能均已在 Linux 侧适配，具体限制见[支持范围](#支持范围)。
