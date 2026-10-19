@@ -96,10 +96,12 @@ Automatic source selection is exact: Ubuntu 24.04 uses noble/ubuntu; Debian 13
 uses trixie/debian. Unknown releases, inconsistent codenames and mismatched
 existing `winehq*` source files stop before new privileged Wine actions. The
 source installer runs this check before installing build dependencies when Wine
-11.0 is missing. Existing matching source files are preserved. Every installed
-Wine package is constrained to 11.0.*, with the existing apt preference file.
+11.0 is missing. Existing matching source files are preserved. The four WineHQ
+runtime packages are constrained to 11.0.*, with the existing apt preference file.
 The source dependency list installs the `vainfo` binary package; `libva-utils`
 is its Debian source-package name and cannot be passed to apt as that binary.
+Distribution development dependencies can also bring distribution Wine tooling;
+that tooling does not satisfy the separate `/opt/wine-stable` 11.0 requirement.
 Other distributions/releases may supply a reviewed Wine 11.0 installation
 separately. `ID_LIKE` is not used to mix binary repositories.
 
