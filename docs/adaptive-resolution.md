@@ -98,6 +98,8 @@ existing `winehq*` source files stop before new privileged Wine actions. The
 source installer runs this check before installing build dependencies when Wine
 11.0 is missing. Existing matching source files are preserved. Every installed
 Wine package is constrained to 11.0.*, with the existing apt preference file.
+The source dependency list installs the `vainfo` binary package; `libva-utils`
+is its Debian source-package name and cannot be passed to apt as that binary.
 Other distributions/releases may supply a reviewed Wine 11.0 installation
 separately. `ID_LIKE` is not used to mix binary repositories.
 

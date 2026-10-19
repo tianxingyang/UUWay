@@ -16,6 +16,8 @@ class SourceInstallerTests(unittest.TestCase):
         script = (ROOT / 'install.sh').read_text()
         start = script.index('if should_run 1; then')
         end = script.index('\nif [[ -z "$gpu_backend"', start)
+        packages_start = script.index('packages=(')
+        packages_end = script.index(')\n', packages_start) + 1
         with tempfile.TemporaryDirectory(prefix='uuway-installer-plan-') as temporary:
             directory = Path(temporary)
             helper = directory / 'python'
@@ -25,17 +27,18 @@ class SourceInstallerTests(unittest.TestCase):
 repo_dir="$1"
 python="$2"
 wine_dir="$3/missing-wine"
-packages=(fixture-package)
+__PACKAGES__
 dry_run=1
 should_run() { return 0; }
 info() { :; }
 ok() { :; }
 confirm() { return 0; }
 die() { printf 'REFUSED %s\\n' "$*"; exit 88; }
-dpkg-query() { printf 'install ok installed'; }
+dpkg-query() { return 1; }
 compgen() { return 1; }
 run() { printf 'PLAN %s\\n' "$*"; }
 '''
+            harness = harness.replace('__PACKAGES__', script[packages_start:packages_end])
             return subprocess.run(['bash', '-c', harness + script[start:end], 'fixture',
                                    str(ROOT), str(helper), str(directory)],
                                   capture_output=True, text=True, timeout=10)
@@ -47,10 +50,12 @@ run() { printf 'PLAN %s\\n' "$*"; }
         self.assertIn('winehq-trixie.sources', result.stdout)
         self.assertNotIn('noble', result.stdout)
         self.assertNotIn('/ubuntu/', result.stdout)
+        self.assertIn('libva-dev vainfo libwine-dev', result.stdout)
+        self.assertNotIn('libva-utils', result.stdout)
         for package in ('winehq-stable', 'wine-stable', 'wine-stable-amd64', 'wine-stable-i386:i386'):
             self.assertIn(package + '=11.0.*', result.stdout)
         self.assertLess(result.stdout.index('preferences.d/uuway-wine'),
-                        result.stdout.index('apt-get install'))
+                        result.stdout.index('apt-get install -y --install-recommends winehq-stable'))
 
     def test_failed_preflight_runs_no_privileged_command(self):
         result = self.stage('exit 1\n')
